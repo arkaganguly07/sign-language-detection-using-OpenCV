@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Language Recognition</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .webcam-container {
+            margin: 0 auto;
+            width: 640px;
+            height: 480px;
+            border: 3px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror the webcam */
+        }
+        .prediction-container {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        #predictionResult {
+            font-size: 72px;
+            font-weight: bold;
+            color: #4CAF50;
+            margin: 10px 0;
+        }
+        .confidence {
+            font-size: 16px;
+            color: #666;
+        }
+        .instructions {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            text-align: left;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .status {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        #canvas {
+            display: none;
+        }
+        .hand-status {
+            margin-top: 10px;
+            font-size: 16px;
+        }
+        #handDetected {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        #processingIndicator {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background-color: #ccc;
+            margin-left: 10px;
+        }
+        .active {
+            background-color: #4CAF50 !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sign Language Recognition</h1>
+    
+    <div class="webcam-container">
+        <video id="webcam" autoplay playsinline></video>
+        <div id="status" class="status">Initializing...</div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    
+    <div class="prediction-container">
+        <h2>Recognized Sign:</h2>
+        <div id="predictionResult">-</div>
+        <div class="confidence" id="confidenceResult"></div>
+        <div class="hand-status">
+            Hand Detection: <span id="handDetected">No</span>
+            <span id="processingIndicator"></span>
+        </div>
+    </div>
+    
+    <div class="instructions">
+        <h3>Instructions:</h3>
+        <p>1. Position your hand in front of the camera.</p>
+        <p>2. Make a sign language gesture.</p>
+        <p>3. The system will automatically detect and display the recognized sign.</p>
+        <p>4. Make sure your hand is clearly visible and well-lit.</p>
+    </div>
+
+    <script>
+        // Access the webcam
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const predictionResult = document.getElementById('predictionResult');
+        const confidenceResult = document.getElementById('confidenceResult');
+        const handDetected = document.getElementById('handDetected');
+        const statusDiv = document.getElementById('status');
+        const processingIndicator = document.getElementById('processingIndicator');
+        
+        // Parameters for frame processing
+        const FRAME_INTERVAL = 150; // Process a frame every 150ms
+        let isProcessing = false;
+        let lastFrameTime = 0;
+        
+        // Check if the browser supports getUserMedia
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            // Request access to the webcam
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                } 
+            })
+            .then(function(stream) {
+                // Set the video source to the webcam stream
+                video.srcObject = stream;
+                statusDiv.textContent = "Webcam Ready";
+                
+                // Set up canvas size
+                canvas.width = 640;
+                canvas.height = 480;
+                
+                // Start processing frames
+                video.addEventListener('loadedmetadata', function() {
+                    setInterval(processFrame, FRAME_INTERVAL);
+                });
+            })
+            .catch(function(error) {
+                console.error("Error accessing the webcam:", error);
+                statusDiv.textContent = "Error: Could not access webcam";
+                predictionResult.textContent = "Error";
+                predictionResult.style.color = "#FF0000";
+                alert("Error accessing the webcam. Please make sure you've granted permission and no other application is using it.");
+            });
+        } else {
+            console.error("getUserMedia is not supported by this browser");
+            statusDiv.textContent = "Error: Browser not supported";
+            predictionResult.textContent = "Error";
+            predictionResult.style.color = "#FF0000";
+            alert("Sorry, your browser does not support webcam access. Please try a modern browser like Chrome, Firefox, or Edge.");
+        }
+        
+        // Function to process a video frame
+        function processFrame() {
+            // Skip if still processing previous frame
+            if (isProcessing || !video.videoWidth) return;
+            
+            // Throttle frame processing
+            const now = Date.now();
+            if (now - lastFrameTime < FRAME_INTERVAL) return;
+            
+            lastFrameTime = now;
+            isProcessing = true;
+            processingIndicator.classList.add('active');
+            
+            // Draw the current frame to the canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert the frame to base64
+            const imageData = canvas.toDataURL('image/jpeg', 0.7);
+            
+            // Send the frame to the backend
+            fetch('/process_frame', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    image_data: imageData
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Update the UI with the prediction
+                if (data.hand_detected) {
+                    handDetected.textContent = "Yes";
+                    handDetected.style.color = "#4CAF50";
+                    
+                    if (data.prediction) {
+                        predictionResult.textContent = data.prediction;
+                        
+                        // Display confidence if available
+                        if (data.confidence) {
+                            const confidencePercent = (data.confidence * 100).toFixed(1);
+                            confidenceResult.textContent = `Confidence: ${confidencePercent}%`;
+                        } else {
+                            confidenceResult.textContent = '';
+                        }
+                    } else {
+                        predictionResult.textContent = "Processing...";
+                        confidenceResult.textContent = '';
+                    }
+                } else {
+                    handDetected.textContent = "No";
+                    handDetected.style.color = "#FF0000";
+                    predictionResult.textContent = "-";
+                    confidenceResult.textContent = '';
+                }
+                
+                statusDiv.textContent = "Ready";
+                isProcessing = false;
+                processingIndicator.classList.remove('active');
+            })
+            .catch(error => {
+                console.error('Error processing frame:', error);
+                statusDiv.textContent = "Error processing frame";
+                isProcessing = false;
+                processingIndicator.classList.remove('active');
+            });
+        }
+    </script>
+</body>
+</html>
